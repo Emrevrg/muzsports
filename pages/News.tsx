@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { fetchRSSData, rewriteNewsWithAI, manageNewsStorage, updateStoredNewsItem } from '../services/geminiService';
+import { fetchRSSData, rewriteNewsWithAI, manageNewsStorage, updateStoredNewsItem, getStoredNews } from '../services/geminiService';
 import { NewsItem, PlayerCard } from '../types';
 import { ExternalLink, Newspaper, RotateCw, BookOpen, X, Calendar, Rss } from 'lucide-react';
 import Loader from '../components/Loader';
@@ -14,7 +14,6 @@ interface ExtendedNewsItem extends NewsItem {
   timestamp: number;
 }
 
-// Mock DB for Player Tags (kept for functionality)
 const cardsDB: Record<string, PlayerCard> = {
   "@Icardi": { id: "p1", name: "Mauro Icardi", team: "Galatasaray", stats: { matches: 25, goals: 20, assists: 6 }, imageUrl: "https://images.unsplash.com/photo-1517466787929-bc90951d0974?auto=format&fit=crop&q=80&w=500", description: "Arjantinli süperstar, ceza sahası içindeki bitiriciliği ile tanınır." },
   "@Mbappe": { id: "p2", name: "Kylian Mbappé", team: "Real Madrid", stats: { matches: 30, goals: 28, assists: 10 }, imageUrl: "https://images.unsplash.com/photo-1431324155629-1a6de134d478?auto=format&fit=crop&q=80&w=500", description: "Dünyanın en hızlı ve teknik oyuncularından biri." },
@@ -35,21 +34,27 @@ const injectTags = (text: string): string => {
 };
 
 const News: React.FC = () => {
-  const [news, setNews] = useState<ExtendedNewsItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Initialize with stored news immediately to prevent layout shift and wait time
+  const [news, setNews] = useState<ExtendedNewsItem[]>(() => getStoredNews());
+  const [loading, setLoading] = useState(news.length === 0); // Only show loader if cache is empty
   const [selectedCard, setSelectedCard] = useState<PlayerCard | null>(null);
   const [readingNews, setReadingNews] = useState<ExtendedNewsItem | null>(null);
   const processingRef = useRef(false);
+  const dataFetchedRef = useRef(false);
 
   useEffect(() => {
+    if (dataFetchedRef.current) return;
+    dataFetchedRef.current = true;
+
     const initNews = async () => {
-      setLoading(true);
+      if (news.length === 0) setLoading(true);
       try {
-        // 1. Fetch Real Data
+        // 1. Fetch Real Data in Background
         const feeds = RSS_FEEDS.map(f => f.url);
         const freshData = await fetchRSSData(feeds, 'NEWS');
         
-        // 2. Manage Storage (Merge & Cleanup > 7 days)
+        // 2. Manage Storage (Merge & Cleanup)
+        // This logic is fast enough to happen without blocking UI
         const managedList = manageNewsStorage(freshData);
         setNews(managedList);
         setLoading(false);
@@ -62,14 +67,14 @@ const News: React.FC = () => {
       }
     };
     initNews();
-  }, []);
+  }, []); // Run once
 
   const processUnprocessedNews = async (items: ExtendedNewsItem[]) => {
     if (processingRef.current) return;
     processingRef.current = true;
 
-    // Only process top 5 unprocessed items at a time to save quota/performance
-    const queue = items.filter(i => !i.isProcessed).slice(0, 5);
+    // Reduced batch size to 3 for better performance
+    const queue = items.filter(i => !i.isProcessed).slice(0, 3);
 
     for (const item of queue) {
       const aiResult = await rewriteNewsWithAI(item.title, item.originalContent);
@@ -85,12 +90,10 @@ const News: React.FC = () => {
 
       // Update State
       setNews(prev => prev.map(n => n.id === item.id ? updatedItem : n));
-      
-      // Update Storage
       updateStoredNewsItem(updatedItem);
       
-      // Artificial delay for rate limiting
-      await new Promise(r => setTimeout(r, 1000)); 
+      // Short delay to yield to main thread
+      await new Promise(r => setTimeout(r, 500)); 
     }
     processingRef.current = false;
   };
@@ -101,7 +104,6 @@ const News: React.FC = () => {
     return parts.map((part, index) => {
       const tagKey = part.trim();
       if (part.startsWith('@')) {
-         // Search loosely in keys
          const key = Object.keys(cardsDB).find(k => k.toLowerCase() === tagKey.toLowerCase());
          if(key) {
             const card = cardsDB[key];
@@ -120,7 +122,7 @@ const News: React.FC = () => {
     });
   };
 
-  if (loading && news.length === 0) return <Loader fullScreen text="RSS Kaynakları Taranıyor ve Düzenleniyor..." />;
+  if (loading) return <Loader fullScreen text="Haberler Yükleniyor..." />;
 
   return (
     <div className="space-y-8 pb-20">
@@ -138,24 +140,23 @@ const News: React.FC = () => {
              </p>
           </div>
         </div>
-        <div className="text-right hidden md:block">
-           <p className="text-xs text-gray-500">*7 günden eski haberler otomatik silinir.</p>
-        </div>
       </div>
       
       {/* News Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {news.map((item) => (
+        {news.map((item, index) => (
           <article 
             key={item.id} 
-            className="glass-panel rounded-2xl overflow-hidden flex flex-col h-full hover:shadow-[0_0_30px_rgba(59,130,246,0.2)] transition-all duration-500 group cursor-pointer border-t border-white/10 hover:border-blue-500/50 hover:-translate-y-2"
+            className="glass-panel rounded-2xl overflow-hidden flex flex-col h-full hover:shadow-[0_0_30px_rgba(59,130,246,0.2)] transition-all duration-500 group cursor-pointer border-t border-white/10 hover:border-blue-500/50 hover:-translate-y-2 will-change-transform"
             onClick={() => setReadingNews(item)}
           >
             {/* Image */}
-            <div className="relative h-56 overflow-hidden">
+            <div className="relative h-56 overflow-hidden bg-[#0f172a]">
               <img 
                 src={item.imageUrl} 
                 alt={item.title} 
+                loading="lazy" // Performance optimization
+                decoding="async" // Performance optimization
                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                 onError={(e) => { (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1517649763962-0c623066013b?auto=format&fit=crop&q=80&w=800'; }}
               />
@@ -201,10 +202,10 @@ const News: React.FC = () => {
         ))}
       </div>
 
-      {/* Full Article Modal */}
+      {/* Full Article Modal - Kept same logic */}
       {readingNews && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/95 backdrop-blur-xl p-0 sm:p-4">
-           <div className="glass-panel w-full max-w-4xl h-full sm:h-[90vh] sm:rounded-3xl overflow-hidden relative border border-white/10 animate-float shadow-[0_0_100px_rgba(0,0,0,0.8)] flex flex-col">
+           <div className="glass-panel w-full max-w-4xl h-full sm:h-[90vh] sm:rounded-3xl overflow-hidden relative border border-white/10 flex flex-col">
               
               <div className="relative h-64 sm:h-80 flex-shrink-0">
                 <img src={readingNews.imageUrl} className="w-full h-full object-cover" alt={readingNews.title} />
@@ -245,7 +246,6 @@ const News: React.FC = () => {
         </div>
       )}
 
-      {/* Player Card Modal */}
       {selectedCard && (
         <PlayerCard3D card={selectedCard} onClose={() => setSelectedCard(null)} />
       )}

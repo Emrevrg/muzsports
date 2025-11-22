@@ -14,19 +14,30 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Simulate initial site load assets/connections
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 2000);
-    return () => clearTimeout(timer);
+    // Removed the artificial 2000ms delay. 
+    // Now purely checks if the DOM is ready, providing a snappy experience.
+    const handleLoad = () => setIsLoading(false);
+    
+    if (document.readyState === 'complete') {
+      handleLoad();
+    } else {
+      window.addEventListener('load', handleLoad);
+      // Fallback in case load event already fired
+      const fallbackTimer = setTimeout(handleLoad, 500); 
+      return () => {
+        window.removeEventListener('load', handleLoad);
+        clearTimeout(fallbackTimer);
+      };
+    }
   }, []);
 
   const handleNavigation = (page: string) => {
+    // Reduced transition delay significantly for perceived speed
     setIsLoading(true);
     setTimeout(() => {
       setCurrentPage(page);
       setIsLoading(false);
-    }, 500); // Small transition delay for effect
+    }, 300); 
   };
 
   const handleAdminLogin = () => {
@@ -44,7 +55,6 @@ const App: React.FC = () => {
         return <Scores />;
       case 'admin':
         return isAdminAuthenticated ? (
-           // If already logged in, go straight to panel, else login
            <AdminPanel /> 
         ) : (
            <AdminLogin onLogin={handleAdminLogin} />

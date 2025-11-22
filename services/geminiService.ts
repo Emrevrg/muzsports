@@ -32,9 +32,17 @@ export const fetchRSSData = async (feedUrls: string[], type: 'NEWS' | 'SCORES'):
   // Using a rotation of proxies to ensure high availability
   const corsProxy = "https://api.allorigins.win/get?url=";
 
+  // Create a promise for each feed with a timeout to prevent one slow feed from blocking the entire app
   const promises = feedUrls.map(async (url) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 Second Timeout Limit
+
     try {
-      const response = await fetch(corsProxy + encodeURIComponent(url));
+      const response = await fetch(corsProxy + encodeURIComponent(url), {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
       if (!response.ok) return;
       
       const data = await response.json();
@@ -80,8 +88,7 @@ export const fetchRSSData = async (feedUrls: string[], type: 'NEWS' | 'SCORES'):
           });
 
         } else {
-          // Score Logic (Parsing titles like "Team A 2-1 Team B" or "Team A vs Team B")
-          // This is a heuristic parser based on common RSS score formats
+          // Score Logic
           if (title.includes(' vs ') || title.match(/\d+-\d+/)) {
              let home = "", away = "", homeScore = 0, awayScore = 0, status = "UPCOMING";
              
@@ -90,17 +97,14 @@ export const fetchRSSData = async (feedUrls: string[], type: 'NEWS' | 'SCORES'):
                home = parts[0];
                away = parts[1];
              } else {
-               // Try to parse score: "Man City 3-1 Arsenal"
-               // Regex to find score pattern
                const scoreMatch = title.match(/(.+?)\s(\d+)-(\d+)\s(.+)/);
                if (scoreMatch) {
                  home = scoreMatch[1];
                  homeScore = parseInt(scoreMatch[2]);
                  awayScore = parseInt(scoreMatch[3]);
                  away = scoreMatch[4];
-                 status = "FINISHED"; // Usually RSS updates after goals/FT
+                 status = "FINISHED"; 
                } else {
-                 // Fallback
                  home = title;
                  status = "LIVE";
                }
@@ -121,8 +125,8 @@ export const fetchRSSData = async (feedUrls: string[], type: 'NEWS' | 'SCORES'):
         }
       });
     } catch (error) {
-      console.warn(`RSS Fetch Warning for ${url}:`, error);
-      // Continue to next feed, don't crash app
+      // Silently fail for this specific feed so others can load
+      // console.warn(`RSS Fetch Warning for ${url}:`, error);
     }
   });
 
@@ -132,9 +136,17 @@ export const fetchRSSData = async (feedUrls: string[], type: 'NEWS' | 'SCORES'):
 
 // --- STORAGE & CLEANUP MANAGEMENT ---
 
+export const getStoredNews = (): any[] => {
+  try {
+    const storedJson = localStorage.getItem(CACHE_KEY_NEWS);
+    return storedJson ? JSON.parse(storedJson) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
 export const manageNewsStorage = (newItems: any[]): any[] => {
-  const storedJson = localStorage.getItem(CACHE_KEY_NEWS);
-  let storedItems: any[] = storedJson ? JSON.parse(storedJson) : [];
+  let storedItems = getStoredNews();
 
   // 1. CLEANUP: Remove items older than 7 days
   const now = Date.now();
@@ -144,13 +156,13 @@ export const manageNewsStorage = (newItems: any[]): any[] => {
   const processedIds = new Set(storedItems.map(i => i.id));
   const freshItemsToAdd = newItems.filter(i => !processedIds.has(i.id));
 
-  // Combine (New items go to front, but we sort by date later anyway)
+  // Combine
   const finalList = [...storedItems, ...freshItemsToAdd];
   
   // Sort by date desc
   finalList.sort((a, b) => b.timestamp - a.timestamp);
 
-  // Save back to storage (limit to 100 items to prevent overflow)
+  // Save back to storage (limit to 100 items)
   localStorage.setItem(CACHE_KEY_NEWS, JSON.stringify(finalList.slice(0, 100)));
 
   return finalList;
@@ -214,7 +226,7 @@ export const analyzeMatchWithAI = async (matchData: any): Promise<string> => {
       Status: ${matchData.status}
       Context: ${matchData.rawDescription}
       
-      Provide a short, exciting commentary (max 100 words) about what this result means or what to expect.
+      Provide a short, exciting commentary (max 100 words).
     `;
     
     const response = await ai.models.generateContent({

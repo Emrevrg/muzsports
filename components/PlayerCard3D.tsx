@@ -1,4 +1,4 @@
-import React, { useState, MouseEvent } from 'react';
+import React, { useState, MouseEvent, useRef } from 'react';
 import { PlayerCard } from '../types';
 import { Trophy, Activity, Target, X, Star, BarChart2 } from 'lucide-react';
 
@@ -10,36 +10,46 @@ interface PlayerCard3DProps {
 const PlayerCard3D: React.FC<PlayerCard3DProps> = ({ card, onClose }) => {
   const [isFlipped, setIsFlipped] = useState(false);
   const [rotate, setRotate] = useState({ x: 0, y: 0 });
+  const frameRef = useRef<number>(0);
 
   const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
     if (isFlipped) return;
+    
+    // Optimize using requestAnimationFrame to prevent layout thrashing
+    cancelAnimationFrame(frameRef.current);
+    
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
-    
-    const rotateX = ((y - centerY) / centerY) * -10; // Max 10deg rotation
-    const rotateY = ((x - centerX) / centerX) * 10;
+    const clientX = e.clientX;
+    const clientY = e.clientY;
 
-    setRotate({ x: rotateX, y: rotateY });
+    frameRef.current = requestAnimationFrame(() => {
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+      
+      const rotateX = ((y - centerY) / centerY) * -10; 
+      const rotateY = ((x - centerX) / centerX) * 10;
+
+      setRotate({ x: rotateX, y: rotateY });
+    });
   };
 
   const handleMouseLeave = () => {
+    cancelAnimationFrame(frameRef.current);
     setRotate({ x: 0, y: 0 });
   };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 perspective-2000" onClick={onClose}>
       
-      {/* Close Button (Mobile Friendly) */}
       <button onClick={onClose} className="absolute top-8 right-8 text-white/50 hover:text-white z-[110]">
         <X size={32} />
       </button>
 
       <div 
-        className="relative w-80 h-[480px] sm:w-96 sm:h-[550px] transition-transform duration-200 ease-out transform-style-3d cursor-pointer"
+        className="relative w-80 h-[480px] sm:w-96 sm:h-[550px] transition-transform duration-200 ease-out transform-style-3d cursor-pointer will-change-transform"
         style={{ 
           transform: isFlipped 
             ? 'rotateY(180deg)' 
@@ -52,16 +62,13 @@ const PlayerCard3D: React.FC<PlayerCard3DProps> = ({ card, onClose }) => {
         {/* FRONT SIDE */}
         <div className="absolute inset-0 w-full h-full backface-hidden rounded-3xl overflow-hidden border border-white/10 bg-[#0f172a] shadow-[0_0_50px_rgba(59,130,246,0.3)] group">
             
-            {/* Parallax Background Image */}
             <div className="absolute inset-0 transform-style-3d">
               <div className="absolute inset-0 bg-cover bg-center scale-110 transition-transform duration-500" style={{ backgroundImage: `url(${card.imageUrl})` }}></div>
               <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent opacity-90"></div>
             </div>
             
-            {/* Holographic Sheen */}
             <div className="absolute inset-0 holo-sheen z-20 opacity-40 pointer-events-none"></div>
 
-            {/* Floating Elements (Translate Z) */}
             <div className="absolute top-6 left-6 z-30 translate-z-30">
               <div className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center border border-white/20 shadow-lg">
                 <Star className="text-yellow-400 fill-yellow-400" size={20} />
@@ -100,7 +107,6 @@ const PlayerCard3D: React.FC<PlayerCard3DProps> = ({ card, onClose }) => {
 
         {/* BACK SIDE */}
         <div className="absolute inset-0 w-full h-full backface-hidden rotate-y-180 rounded-3xl overflow-hidden border border-purple-500/30 bg-gradient-to-br from-[#0f172a] via-[#1e1b4b] to-black p-8 flex flex-col shadow-[0_0_50px_rgba(168,85,247,0.3)]">
-             {/* Decorative Background */}
              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl pointer-events-none"></div>
              <div className="absolute top-4 right-4 opacity-10">
                <Trophy size={120} />
